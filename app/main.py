@@ -1,8 +1,12 @@
+import time
+
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
+from starlette.requests import Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
+from app.config import settings
 from app.database import Base, engine, get_db
 from app.logger import logger
 from app.tasks import process_enquiry
@@ -10,7 +14,7 @@ from app.tasks import process_enquiry
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="Closira Enquiry Handling Backend",
+    title=settings.app_name,
     description="FastAPI prototype for customer enquiry creation, SOP processing, follow-ups, escalation, and history tracking.",
     version="1.0.0",
     openapi_tags=[
@@ -18,6 +22,35 @@ app = FastAPI(
         {"name": "Health", "description": "Service and database health checks."},
     ],
 )
+
+
+def route_name(request: Request) -> str:
+    route = request.scope.get("route")
+    return getattr(route, "path", request.url.path)
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    start_time = time.perf_counter()
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        logger.info(
+            "request completed",
+            extra={
+                "event": "request_completed",
+                "enquiry_id": request.path_params.get("enquiry_id"),
+                "method": request.method,
+                "route": route_name(request),
+                "status_code": status_code,
+                "duration_ms": duration_ms,
+            },
+        )
 
 
 def get_enquiry_or_404(db: Session, enquiry_id: int) -> models.Enquiry:
@@ -38,6 +71,14 @@ def get_enquiry_or_404(db: Session, enquiry_id: int) -> models.Enquiry:
     description="Submit a new customer enquiry. The enquiry is accepted and processed asynchronously using background SOP matching.",
     response_description="Acknowledgement that the enquiry was accepted and queued for processing.",
     tags=["Enquiries"],
+    responses={
+        status.HTTP_202_ACCEPTED: {
+            "description": "Enquiry accepted. Processing continues in a FastAPI background task.",
+        },
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {
+            "description": "Request validation failed.",
+        },
+    },
 )
 def create_enquiry(
     enquiry: schemas.EnquiryCreate,
@@ -67,6 +108,12 @@ def create_enquiry(
     description="Create a follow-up reminder for an enquiry that is not already escalated.",
     response_description="Details of the scheduled follow-up event.",
     tags=["Enquiries"],
+    responses={
+        status.HTTP_200_OK: {"description": "Follow-up scheduled successfully."},
+        status.HTTP_400_BAD_REQUEST: {"description": "The enquiry cannot receive a follow-up in its current state."},
+        status.HTTP_404_NOT_FOUND: {"description": "No enquiry exists for the supplied id."},
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Request validation failed."},
+    },
 )
 def schedule_follow_up(
     enquiry_id: int,
@@ -103,6 +150,12 @@ def schedule_follow_up(
     description="Mark an enquiry as escalated and record the reason so it can be handled by a human support agent.",
     response_description="Confirmation that the enquiry was escalated.",
     tags=["Enquiries"],
+    responses={
+        status.HTTP_200_OK: {"description": "Enquiry escalated successfully."},
+        status.HTTP_400_BAD_REQUEST: {"description": "The enquiry has already been escalated."},
+        status.HTTP_404_NOT_FOUND: {"description": "No enquiry exists for the supplied id."},
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Request validation failed."},
+    },
 )
 def escalate_enquiry(
     enquiry_id: int,
@@ -138,6 +191,11 @@ def escalate_enquiry(
     description="Retrieve the enquiry record together with its timeline of events, SOP match status, and any escalation details.",
     response_description="The enquiry history and lifecycle timeline.",
     tags=["Enquiries"],
+    responses={
+        status.HTTP_200_OK: {"description": "Enquiry history returned successfully."},
+        status.HTTP_404_NOT_FOUND: {"description": "No enquiry exists for the supplied id."},
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Request validation failed."},
+    },
 )
 def get_enquiry_history(
     enquiry_id: int,
@@ -166,6 +224,10 @@ def get_enquiry_history(
     description="Return the service and database connection status.",
     response_description="Service health and database availability report.",
     tags=["Health"],
+    responses={
+        status.HTTP_200_OK: {"description": "API and database are reachable."},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "Database connection failed."},
+    },
 )
 def health_check(db: Session = Depends(get_db)):
     try:

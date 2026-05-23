@@ -1,10 +1,18 @@
 # Closira Backend Assignment
 
-A lightweight FastAPI backend that simulates Closira's customer enquiry-handling workflow.
+A lightweight FastAPI backend that simulates Closira's customer enquiry workflow. It accepts inbound enquiries, matches them against simple SOP rules, stores the enquiry timeline in SQLite, and supports follow-ups, escalation, history lookup, and health checks.
 
-## Objective
+The project is intentionally simple: no Docker, no Celery, no Redis, no authentication, and no external database setup. The goal is to show clean backend structure and practical engineering judgment without unnecessary production infrastructure.
 
-This project accepts inbound customer enquiries, processes them asynchronously using SOP keyword matching, stores enquiry history in SQLite, supports follow-ups and escalation, and exposes a health check endpoint.
+## Workflow
+
+1. A customer enquiry is submitted through `POST /enquiry`.
+2. The enquiry is saved in SQLite with status `created`.
+3. A FastAPI `BackgroundTasks` job runs SOP matching.
+4. If a keyword-based SOP matches, the enquiry becomes `processed` and stores the suggested response.
+5. If no SOP matches, the enquiry is escalated automatically.
+6. Follow-ups and manual escalations can be added through separate endpoints.
+7. `GET /enquiry/{id}/history` returns the full enquiry record and timeline.
 
 ## Tech Stack
 
@@ -12,131 +20,181 @@ This project accepts inbound customer enquiries, processes them asynchronously u
 - FastAPI
 - SQLite
 - SQLAlchemy
-- FastAPI BackgroundTasks
 - Pydantic
+- FastAPI BackgroundTasks
 - JSON structured logging
-
-## Why FastAPI BackgroundTasks instead of Celery?
-
-For this assignment, FastAPI BackgroundTasks is used because the requirement is to simulate asynchronous enquiry processing in a lightweight prototype. Celery is better for production workloads with retries, queues, distributed workers, and Redis/RabbitMQ, but it adds extra setup complexity. Since this assignment values clarity and ownership over production-level infrastructure, BackgroundTasks is the faster and cleaner choice.
-
-## Why SQLite instead of PostgreSQL?
-
-SQLite is used because this is a small prototype with local setup requirements. It avoids external database setup and makes the project easy to run and review. PostgreSQL would be a better choice for production because of stronger concurrency, scalability, and multi-tenant support.
 
 ## Folder Structure
 
 ```text
-closira_ai_support_assignment/
+closira_ai/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py
-│   ├── database.py
-│   ├── models.py
-│   ├── schemas.py
-│   ├── crud.py
-│   ├── sop_engine.py
-│   ├── tasks.py
-│   └── logger.py
-├── tests.http
+│   ├── config.py        # Environment-backed settings
+│   ├── crud.py          # Database write/read helpers
+│   ├── database.py      # SQLAlchemy engine and session setup
+│   ├── logger.py        # Structured JSON logger
+│   ├── main.py          # FastAPI app, routes, middleware
+│   ├── models.py        # SQLAlchemy models
+│   ├── schemas.py       # Pydantic request/response schemas
+│   ├── sop_engine.py    # Keyword-based SOP matching
+│   └── tasks.py         # Background enquiry processing
+├── .env.example
 ├── requirements.txt
-├── README.md
-└── .gitignore
+├── tests.http
+└── README.md
 ```
 
-## Setup Instructions
+## Setup
 
-### 1. Create virtual environment
+Create and activate a virtual environment:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-On Windows:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-### 2. Install dependencies
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the server
+Optional: configure the database URL. SQLite is the default, so this step can be skipped for local use. The app reads environment variables from the shell; `.env.example` documents the expected value.
+
+```bash
+cp .env.example .env
+export DATABASE_URL=sqlite:///./closira.db
+```
+
+Run the API:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-### 4. Open API documentation
-
-Visit:
+Open the interactive docs:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
-## API Endpoints
+## Endpoints
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/enquiry` | Create inbound enquiry and trigger async processing |
-| POST | `/enquiry/{id}/follow-up` | Schedule follow-up |
-| POST | `/enquiry/{id}/escalate` | Escalate enquiry to human agent |
-| GET | `/enquiry/{id}/history` | Get enquiry history and timeline |
-| GET | `/health` | API and database health check |
+| `POST` | `/enquiry` | Creates an inbound enquiry and starts background SOP processing. |
+| `POST` | `/enquiry/{enquiry_id}/follow-up` | Schedules a follow-up for an enquiry that is not escalated. |
+| `POST` | `/enquiry/{enquiry_id}/escalate` | Manually escalates an enquiry to a human agent. |
+| `GET` | `/enquiry/{enquiry_id}/history` | Returns enquiry details, SOP result, escalation reason, and timeline events. |
+| `GET` | `/health` | Checks API and database availability. |
 
-### Example Request Payloads
+## Example Requests
 
-Create enquiry:
-```json
-{
-  "channel": "whatsapp",
-  "customer_name": "Sarah M.",
-  "message": "I want to book an appointment for tomorrow."
-}
+Create an enquiry:
+
+```bash
+curl -X POST http://127.0.0.1:8000/enquiry \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel": "whatsapp",
+    "customer_name": "Sarah M.",
+    "message": "I want to book an appointment tomorrow afternoon."
+  }'
 ```
 
-Follow-up request:
-```json
-{
-  "delay_minutes": 30,
-  "message_template": "Hi, following up on your enquiry."
-}
+Schedule a follow-up:
+
+```bash
+curl -X POST http://127.0.0.1:8000/enquiry/1/follow-up \
+  -H "Content-Type: application/json" \
+  -d '{
+    "delay_minutes": 30,
+    "message_template": "Hi, following up on your enquiry."
+  }'
 ```
 
-Escalation request:
-```json
-{
-  "reason": "Customer requested a human agent."
-}
+Escalate an enquiry:
+
+```bash
+curl -X POST http://127.0.0.1:8000/enquiry/1/escalate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "Customer requested a human agent."
+  }'
 ```
 
-## SOP Matching Logic
+Get history:
 
-The backend uses simple keyword logic to match enquiries to hardcoded SOPs:
+```bash
+curl http://127.0.0.1:8000/enquiry/1/history
+```
 
-| SOP | Example Keywords |
-|---|---|
-| Booking enquiry | booking, appointment, schedule |
-| Pricing question | price, pricing, cost, quote |
-| Complaint | complaint, unhappy, issue, problem |
-| After-hours message | urgent, emergency, after hours |
+Check health:
 
-If no SOP matches, the enquiry is automatically escalated.
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+## SOP Matching
+
+The SOP engine uses simple keyword matching to keep the assignment transparent and easy to review.
+
+| SOP | Keywords | Outcome |
+|---|---|---|
+| Booking Enquiry | booking, book, appointment, schedule, reservation | Stores a booking-focused suggested response. |
+| Pricing Question | price, pricing, cost, quote, charges, plan | Stores a pricing-focused suggested response. |
+| Complaint | complaint, unhappy, issue, problem, bad, refund | Stores a complaint acknowledgement response. |
+| After Hours Message | urgent, emergency, after hours, asap | Stores an urgent-request acknowledgement response. |
+
+If no SOP matches, the enquiry is escalated automatically with the reason `No SOP matched the inbound message.`
+
+## Logging
+
+Logs are emitted as JSON and include:
+
+- `asctime`
+- `levelname`
+- `event`
+- `enquiry_id`
+- `method`
+- `route`
+- `status_code`
+- `duration_ms`
+
+The request logging middleware records every API request with method, route, status code, and duration. Domain events such as `enquiry_created`, `sop_matched`, and `escalation_triggered` include `enquiry_id` where available.
+
+## BackgroundTasks vs Celery
+
+FastAPI `BackgroundTasks` is used because this is a local assignment prototype. It keeps the runtime simple while still showing asynchronous-style processing after the API accepts an enquiry.
+
+Celery would be better for production workloads that need durable queues, retries, distributed workers, scheduled jobs, and Redis or RabbitMQ. For this assignment, Celery would add operational complexity without improving the core demonstration.
+
+## SQLite vs PostgreSQL
+
+SQLite is the default because it requires no external setup and makes the project easy to run during review.
+
+PostgreSQL would be the stronger production choice for higher concurrency, stronger operational tooling, migrations, backups, and multi-user workloads. The code keeps `DATABASE_URL` configurable so the storage layer can evolve without changing route logic.
 
 ## Known Limitations
 
-- No authentication.
-- No real AI model integration.
-- BackgroundTasks do not provide production-grade queueing or retries.
-- SQLite is not ideal for high-concurrency production use.
-- Follow-up scheduling is stored but not executed by a real scheduler.
+- No authentication or authorization.
+- No database migrations.
+- No production-grade task queue or retry mechanism.
+- Follow-ups are stored but not executed by a scheduler.
+- SOP matching is keyword-based, not AI-powered.
+- SQLite is not intended for high-concurrency production traffic.
+
+## Future Improvements
+
+- Add Alembic migrations.
+- Add automated tests with pytest and FastAPI `TestClient`.
+- Add authentication for staff-only operations.
+- Replace keyword SOP matching with an AI or rules service.
+- Add a real scheduler for follow-up execution.
+- Move to PostgreSQL for production deployment.
+- Add CI checks for linting and tests.
 
 ## Testing
 
-Use the included `tests.http` file in VS Code with the REST Client extension.
+Use `tests.http` with the VS Code REST Client extension, or run the `curl` commands above after starting the server.
