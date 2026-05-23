@@ -1,0 +1,62 @@
+### Health Check
+GET http://127.0.0.1:8000/health
+
+### Create Booking Enquiry
+POST http://127.0.0.1:8000/enquiry
+Content-Type: application/json
+
+{
+  "channel": "whatsapp",
+  "customer_name": "Sarah M.",
+  "message": "Hi, I want to book an appointment for tomorrow."
+}
+
+### Create Pricing Enquiry
+POST http://127.0.0.1:8000/enquiry
+Content-Type: application/json
+
+{
+  "channel": "email",
+  "customer_name": "Amit Sharma",
+  "message": "Can you share the pricing and quote details?"
+}
+
+### Create Complaint Enquiry
+POST http://127.0.0.1:8000/enquiry
+Content-Type: application/json
+
+{
+  "channel": "call",
+  "customer_name": "Neha Kapoor",
+  "message": "I am unhappy with the service and want to raise a complaint."
+}
+
+### Create Unknown Enquiry
+POST http://127.0.0.1:8000/enquiry
+Content-Type: application/json
+
+{
+  "channel": "whatsapp",
+  "customer_name": "Rohan",
+  "message": "Can someone explain your business process?"
+}
+
+### Schedule Follow Up
+POST http://127.0.0.1:8000/enquiry/1/follow-up
+Content-Type: application/json
+
+{
+  "delay_minutes": 30,
+  "message_template": "Hi, following up on your enquiry."
+}
+
+### Escalate Enquiry
+POST http://127.0.0.1:8000/enquiry/1/escalate
+Content-Type: application/json
+
+{
+  "reason": "Customer requested human agent"
+}
+
+### Get Enquiry History
+GET http://127.0.0.1:8000/enquiry/1/history
