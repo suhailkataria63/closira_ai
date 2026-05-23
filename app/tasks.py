@@ -46,7 +46,7 @@ def process_enquiry(enquiry_id: int) -> None:
             extra={"event": "sop_matched", "enquiry_id": enquiry.id},
         )
 
-    except Exception as exc:
+    except Exception:
         logger.exception(
             "background task failed",
             extra={"event": "task_failed", "enquiry_id": enquiry_id},

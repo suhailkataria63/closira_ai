@@ -7,14 +7,24 @@ from pydantic.types import StringConstraints
 Channel = Literal["whatsapp", "email", "call"]
 EnquiryStatus = Literal["accepted", "created", "processed", "follow_up_scheduled", "escalated"]
 FollowUpStatus = Literal["scheduled"]
-NonEmptyShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
-NonEmptyMessage = Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=2000)]
+NonEmptyShortText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
+]
+NonEmptyMessage = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=5, max_length=2000),
+]
 ReasonText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=500)]
 
 
 class EnquiryCreate(BaseModel):
     channel: Channel = Field(..., description="Inbound channel used by the customer.", examples=["whatsapp"])
-    customer_name: NonEmptyShortText = Field(..., description="Customer display name.", examples=["Sarah M."])
+    customer_name: NonEmptyShortText = Field(
+        ...,
+        description="Customer display name.",
+        examples=["Sarah M."],
+    )
     message: NonEmptyMessage = Field(
         ...,
         description="Raw customer enquiry text.",
@@ -39,8 +49,17 @@ class EnquiryCreateResponse(BaseModel):
 
 
 class FollowUpCreate(BaseModel):
-    delay_minutes: int = Field(..., ge=1, le=10080, description="Delay before follow-up, in minutes.", examples=[30])
-    message_template: Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=500)] | None = Field(
+    delay_minutes: int = Field(
+        ...,
+        ge=1,
+        le=10080,
+        description="Delay before follow-up, in minutes.",
+        examples=[30],
+    )
+    message_template: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=5, max_length=500),
+    ] | None = Field(
         None,
         description="Optional message template for the follow-up.",
         examples=["Hi, following up on your enquiry."],

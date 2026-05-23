@@ -14,6 +14,8 @@ class LogContextFilter(logging.Filter):
             "route": None,
             "status_code": None,
             "duration_ms": None,
+            "database_connected": None,
+            "environment_loaded": None,
         }
         for key, value in defaults.items():
             if not hasattr(record, key):
@@ -32,7 +34,12 @@ def setup_logger() -> logging.Logger:
     handler = logging.StreamHandler(sys.stdout)
     handler.addFilter(LogContextFilter())
     formatter = jsonlogger.JsonFormatter(
-        "%(asctime)s %(levelname)s %(event)s %(enquiry_id)s %(method)s %(route)s %(status_code)s %(duration_ms)s %(message)s"
+        (
+            "%(asctime)s %(levelname)s %(event)s %(enquiry_id)s %(method)s "
+            "%(route)s %(status_code)s %(duration_ms)s %(database_connected)s "
+            "%(environment_loaded)s %(message)s"
+        ),
+        rename_fields={"asctime": "timestamp", "levelname": "level"},
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)

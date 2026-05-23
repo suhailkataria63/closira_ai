@@ -1,22 +1,39 @@
+from contextlib import asynccontextmanager
 import time
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
-from starlette.requests import Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import crud, models, schemas
+from app import crud, docs, models, schemas
 from app.config import settings
 from app.database import Base, engine, get_db
 from app.logger import logger
 from app.tasks import process_enquiry
 
-Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+    logger.info(
+        "app started",
+        extra={
+            "event": "app_started",
+            "enquiry_id": None,
+            "database_connected": True,
+            "environment_loaded": True,
+        },
+    )
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
     description="FastAPI prototype for customer enquiry creation, SOP processing, follow-ups, escalation, and history tracking.",
     version="1.0.0",
+    lifespan=lifespan,
     openapi_tags=[
         {"name": "Enquiries", "description": "Endpoints for enquiry lifecycle management."},
         {"name": "Health", "description": "Service and database health checks."},
@@ -74,6 +91,11 @@ def get_enquiry_or_404(db: Session, enquiry_id: int) -> models.Enquiry:
     responses={
         status.HTTP_202_ACCEPTED: {
             "description": "Enquiry accepted. Processing continues in a FastAPI background task.",
+            "content": {
+                "application/json": {
+                    "example": docs.ENQUIRY_CREATE_RESPONSE_EXAMPLE,
+                },
+            },
         },
         status.HTTP_422_UNPROCESSABLE_ENTITY: {
             "description": "Request validation failed.",
@@ -109,8 +131,13 @@ def create_enquiry(
     response_description="Details of the scheduled follow-up event.",
     tags=["Enquiries"],
     responses={
-        status.HTTP_200_OK: {"description": "Follow-up scheduled successfully."},
-        status.HTTP_400_BAD_REQUEST: {"description": "The enquiry cannot receive a follow-up in its current state."},
+        status.HTTP_200_OK: {
+            "description": "Follow-up scheduled successfully.",
+            "content": {"application/json": {"example": docs.FOLLOW_UP_RESPONSE_EXAMPLE}},
+        },
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "The enquiry cannot receive a follow-up in its current state.",
+        },
         status.HTTP_404_NOT_FOUND: {"description": "No enquiry exists for the supplied id."},
         status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Request validation failed."},
     },
@@ -151,7 +178,10 @@ def schedule_follow_up(
     response_description="Confirmation that the enquiry was escalated.",
     tags=["Enquiries"],
     responses={
-        status.HTTP_200_OK: {"description": "Enquiry escalated successfully."},
+        status.HTTP_200_OK: {
+            "description": "Enquiry escalated successfully.",
+            "content": {"application/json": {"example": docs.ESCALATION_RESPONSE_EXAMPLE}},
+        },
         status.HTTP_400_BAD_REQUEST: {"description": "The enquiry has already been escalated."},
         status.HTTP_404_NOT_FOUND: {"description": "No enquiry exists for the supplied id."},
         status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Request validation failed."},
@@ -192,7 +222,23 @@ def escalate_enquiry(
     response_description="The enquiry history and lifecycle timeline.",
     tags=["Enquiries"],
     responses={
-        status.HTTP_200_OK: {"description": "Enquiry history returned successfully."},
+        status.HTTP_200_OK: {
+            "description": "Enquiry history returned successfully.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "processed": {
+                            "summary": "SOP matched",
+                            "value": docs.PROCESSED_HISTORY_RESPONSE_EXAMPLE,
+                        },
+                        "auto_escalated": {
+                            "summary": "Auto escalation when no SOP matches",
+                            "value": docs.AUTO_ESCALATED_HISTORY_RESPONSE_EXAMPLE,
+                        },
+                    },
+                },
+            },
+        },
         status.HTTP_404_NOT_FOUND: {"description": "No enquiry exists for the supplied id."},
         status.HTTP_422_UNPROCESSABLE_ENTITY: {"description": "Request validation failed."},
     },

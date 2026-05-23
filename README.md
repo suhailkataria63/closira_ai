@@ -14,6 +14,32 @@ The project is intentionally simple: no Docker, no Celery, no Redis, no authenti
 6. Follow-ups and manual escalations can be added through separate endpoints.
 7. `GET /enquiry/{id}/history` returns the full enquiry record and timeline.
 
+## Architecture Workflow
+
+```text
+Client / REST caller
+        |
+        v
+FastAPI route handlers
+        |
+        v
+Pydantic schemas validate request data
+        |
+        v
+CRUD helpers persist enquiry and timeline events
+        |
+        v
+FastAPI BackgroundTasks runs SOP processing
+        |
+        v
+SOP engine returns a match or escalation decision
+        |
+        v
+SQLite stores final status, suggested response, and history
+```
+
+This keeps responsibilities separated without adding heavy layers. Routes handle HTTP concerns, schemas define API contracts, CRUD functions own persistence, and the SOP engine owns matching logic.
+
 ## Tech Stack
 
 - Python
@@ -33,6 +59,7 @@ closira_ai/
 │   ├── config.py        # Environment-backed settings
 │   ├── crud.py          # Database write/read helpers
 │   ├── database.py      # SQLAlchemy engine and session setup
+│   ├── docs.py          # OpenAPI example payloads
 │   ├── logger.py        # Structured JSON logger
 │   ├── main.py          # FastAPI app, routes, middleware
 │   ├── models.py        # SQLAlchemy models
@@ -136,6 +163,74 @@ Check health:
 curl http://127.0.0.1:8000/health
 ```
 
+## Example API Responses
+
+Successful enquiry creation:
+
+```json
+{
+  "job_id": 1,
+  "status": "accepted",
+  "message": "Enquiry received and queued for background processing."
+}
+```
+
+Processed enquiry history:
+
+```json
+{
+  "id": 1,
+  "channel": "whatsapp",
+  "customer_name": "Sarah M.",
+  "message": "I want to book an appointment tomorrow afternoon.",
+  "status": "processed",
+  "matched_sop": "Booking Enquiry",
+  "suggested_response": "Thanks for reaching out. We can help you schedule a booking. Please share your preferred date and time.",
+  "escalation_reason": null,
+  "created_at": "2026-05-23T19:30:12.541000",
+  "timeline": [
+    {
+      "event_type": "enquiry_created",
+      "details": "Inbound enquiry created.",
+      "created_at": "2026-05-23T19:30:12.541000"
+    },
+    {
+      "event_type": "sop_matched",
+      "details": "Matched SOP: Booking Enquiry",
+      "created_at": "2026-05-23T19:30:12.549000"
+    }
+  ]
+}
+```
+
+Auto-escalated enquiry history:
+
+```json
+{
+  "id": 2,
+  "channel": "email",
+  "customer_name": "Amit K.",
+  "message": "Can someone help me with a custom partnership request?",
+  "status": "escalated",
+  "matched_sop": null,
+  "suggested_response": null,
+  "escalation_reason": "No SOP matched the inbound message.",
+  "created_at": "2026-05-23T19:35:00.100000",
+  "timeline": [
+    {
+      "event_type": "enquiry_created",
+      "details": "Inbound enquiry created.",
+      "created_at": "2026-05-23T19:35:00.100000"
+    },
+    {
+      "event_type": "escalation_triggered",
+      "details": "No SOP matched the inbound message.",
+      "created_at": "2026-05-23T19:35:00.112000"
+    }
+  ]
+}
+```
+
 ## SOP Matching
 
 The SOP engine uses simple keyword matching to keep the assignment transparent and easy to review.
@@ -153,8 +248,8 @@ If no SOP matches, the enquiry is escalated automatically with the reason `No SO
 
 Logs are emitted as JSON and include:
 
-- `asctime`
-- `levelname`
+- `timestamp`
+- `level`
 - `event`
 - `enquiry_id`
 - `method`
@@ -163,6 +258,47 @@ Logs are emitted as JSON and include:
 - `duration_ms`
 
 The request logging middleware records every API request with method, route, status code, and duration. Domain events such as `enquiry_created`, `sop_matched`, and `escalation_triggered` include `enquiry_id` where available.
+
+Startup log:
+
+```json
+{
+  "timestamp": "2026-05-23 19:30:00,100",
+  "level": "INFO",
+  "event": "app_started",
+  "enquiry_id": null,
+  "database_connected": true,
+  "environment_loaded": true,
+  "message": "app started"
+}
+```
+
+SOP match log:
+
+```json
+{
+  "timestamp": "2026-05-23 19:30:12,549",
+  "level": "INFO",
+  "event": "sop_matched",
+  "enquiry_id": 1
+}
+```
+
+Request log:
+
+```json
+{
+  "timestamp": "2026-05-23 19:30:12,555",
+  "level": "INFO",
+  "event": "request_completed",
+  "enquiry_id": "1",
+  "method": "GET",
+  "route": "/enquiry/{enquiry_id}/history",
+  "status_code": 200,
+  "duration_ms": 2.73,
+  "message": "request completed"
+}
+```
 
 ## BackgroundTasks vs Celery
 
@@ -175,6 +311,21 @@ Celery would be better for production workloads that need durable queues, retrie
 SQLite is the default because it requires no external setup and makes the project easy to run during review.
 
 PostgreSQL would be the stronger production choice for higher concurrency, stronger operational tooling, migrations, backups, and multi-user workloads. The code keeps `DATABASE_URL` configurable so the storage layer can evolve without changing route logic.
+
+## Project Assumptions
+
+- Enquiry volume is small enough for a local prototype.
+- SOP matching can be keyword-based for assignment review.
+- Background processing only needs to demonstrate asynchronous-style behavior.
+- Follow-up execution is out of scope; the API records follow-up intent.
+- Human-agent workflows are represented by escalation status and reason.
+- Environment configuration is provided through shell variables.
+
+## Why This Structure Scales Reasonably For SMB Workflows
+
+Small and medium businesses often need clear, auditable workflows before they need distributed infrastructure. This project keeps the core workflow easy to inspect: every enquiry has a status, every major action creates a timeline event, and logs expose request and domain activity.
+
+The file structure can grow gradually. More SOP rules can be added in `sop_engine.py`, persistence logic can stay in `crud.py`, API contracts can evolve in `schemas.py`, and heavier infrastructure such as PostgreSQL, migrations, or a real queue can be introduced later without rewriting the route layer.
 
 ## Known Limitations
 
